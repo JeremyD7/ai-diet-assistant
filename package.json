@@ -22,5 +22,8 @@
   "homepage": "https://github.com/JeremyD7/ai-diet-assistant#readme",
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4"
+  },
+  "devDependencies": {
+    "supabase": "^2.98.2"
   }
 }
