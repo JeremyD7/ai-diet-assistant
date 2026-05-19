@@ -27,11 +27,15 @@ serve(async (req) => {
     if (!imageUrl && !description) {
       return new Response(
         JSON.stringify({ error: "请提供图片链接或食物描述" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400,
+        }
       );
     }
 
     const systemPrompt = `你是一个专业营养师。请严格分析以下食物，并只返回纯JSON格式，不要包含任何其他文字或代码块标记。
+
 注意事项：
 1. 只返回一个JSON对象，不要有多个
 2. 数值不要包含任何单位，纯数字即可
@@ -58,11 +62,14 @@ serve(async (req) => {
     let userContent: any;
 
     if (imageUrl) {
-      console.log("检测到图片URL，准备多模态请求");
+      console.log("检测到图片，使用VLM模型处理");
+      
       userContent = [
         { type: "text", text: `${systemPrompt}\n请仔细分析这张食物图片，识别食物的种类、分量，然后估算营养成分。必须返回真实的估计值，不要全部返回0！` }
       ];
       userContent.push({ type: "image_url", image_url: { url: imageUrl } });
+      console.log("发送给VLM模型的图片URL:", imageUrl);
+      
     } else {
       userContent = `请分析以下食物：${description}\n${systemPrompt}`;
       console.log("发送文本请求，描述:", description);
@@ -70,7 +77,7 @@ serve(async (req) => {
 
     messages.push({ role: "user", content: userContent });
 
-    console.log("调用硅基流动 API");
+    console.log("===== 调用硅基流动VLM模型 =====");
 
     const response = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
       method: "POST",
@@ -79,10 +86,10 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "Qwen3.6-35B-A3B",
+        model: "Qwen/Qwen3.6-35B-A3B",
         messages: messages,
         temperature: 0.1,
-        max_tokens: 512,
+        max_tokens: 1024,
       }),
     });
 
@@ -100,9 +107,27 @@ serve(async (req) => {
       throw new Error("AI 返回格式异常，无 choices");
     }
 
-    const aiContent = aiData.choices[0].message.content;
-    console.log("AI 返回原始内容长度:", aiContent?.length);
-    console.log("AI 返回原始内容:", aiContent);
+    const message = aiData.choices[0].message;
+    console.log("AI 返回的 message 对象:", message);
+    
+    if (!message) {
+      console.error("AI 返回的 message 为空或 undefined");
+      throw new Error("AI 返回消息为空");
+    }
+    
+    let aiContent = message.content;
+    console.log("AI 返回原始 content:", aiContent);
+    
+    if (!aiContent || typeof aiContent !== 'string' || aiContent.trim() === '') {
+      console.warn("⚠️ content 为空，检查 reasoning_content...");
+      aiContent = message.reasoning_content;
+      console.log("从 reasoning_content 获取内容:", aiContent);
+    }
+    
+    if (!aiContent || typeof aiContent !== 'string' || aiContent.trim() === '') {
+      console.error("AI 返回的 content 和 reasoning_content 都为空");
+      throw new Error("AI 返回内容为空");
+    }
 
     let result: any;
     try {
@@ -121,14 +146,13 @@ serve(async (req) => {
           fallback: true
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 200
+          status: 200,
         });
       }
     }
 
     console.log("最终结果:", result);
     
-    // 检查是否返回了全0，如果是则提示问题
     const isAllZero = result.total_calories === 0 && result.protein_g === 0 && result.fat_g === 0 && result.carbs_g === 0;
     if (isAllZero) {
       console.warn("⚠️ 警告：返回的营养数据全为0，这可能表示AI无法识别图片或图片不可访问");
@@ -142,7 +166,10 @@ serve(async (req) => {
     console.error("Error stack:", error.stack);
     return new Response(
       JSON.stringify({ error: error.message || "Internal Server Error" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      }
     );
   }
 });
