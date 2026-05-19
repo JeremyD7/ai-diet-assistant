@@ -36,7 +36,8 @@ serve(async (req) => {
 1. 只返回一个JSON对象，不要有多个
 2. 数值不要包含任何单位，纯数字即可
 3. 格式必须严格符合JSON规范
-4. 返回格式示例：
+4. 必须返回真实的估计值，不要全部返回0
+5. 返回格式示例：
 {
   "total_calories": 200,
   "protein_g": 10,
@@ -47,21 +48,30 @@ serve(async (req) => {
 }
 如果无法识别食物，请返回{"error": "无法识别食物"}。`;
 
-    let userMessage: any;
-    if (imageUrl && false) {
-    } else {
-      const actualDescription = description || "请分析这个食物图片";
-      userMessage = `请分析以下食物：${actualDescription}\n${systemPrompt}`;
-    }
-
-    console.log("调用硅基流动 API");
-    
     const apiKey = Deno.env.get("SILICONFLOW_API_KEY");
     if (!apiKey) {
       throw new Error("SILICONFLOW_API_KEY 环境变量未配置");
     }
     console.log("API Key 存在，长度:", apiKey.length);
-    
+
+    let messages: any[] = [];
+    let userContent: any;
+
+    if (imageUrl) {
+      console.log("检测到图片URL，准备多模态请求");
+      userContent = [
+        { type: "text", text: `${systemPrompt}\n请仔细分析这张食物图片，识别食物的种类、分量，然后估算营养成分。必须返回真实的估计值，不要全部返回0！` }
+      ];
+      userContent.push({ type: "image_url", image_url: { url: imageUrl } });
+    } else {
+      userContent = `请分析以下食物：${description}\n${systemPrompt}`;
+      console.log("发送文本请求，描述:", description);
+    }
+
+    messages.push({ role: "user", content: userContent });
+
+    console.log("调用硅基流动 API");
+
     const response = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -69,13 +79,8 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "Qwen/Qwen2.5-7B-Instruct",
-        messages: [
-          {
-            role: "user",
-            content: userMessage,
-          },
-        ],
+        model: "Qwen3.6-35B-A3B",
+        messages: messages,
         temperature: 0.1,
         max_tokens: 512,
       }),
@@ -111,7 +116,7 @@ serve(async (req) => {
       } catch (fallbackError) {
         console.error("所有方案都失败:", fallbackError);
         return new Response(JSON.stringify({
-          error: "AI 返回格式异常，已使用默认值",
+          error: "AI 返回格式异常",
           raw_content: aiContent,
           fallback: true
         }), {
@@ -122,6 +127,12 @@ serve(async (req) => {
     }
 
     console.log("最终结果:", result);
+    
+    // 检查是否返回了全0，如果是则提示问题
+    const isAllZero = result.total_calories === 0 && result.protein_g === 0 && result.fat_g === 0 && result.carbs_g === 0;
+    if (isAllZero) {
+      console.warn("⚠️ 警告：返回的营养数据全为0，这可能表示AI无法识别图片或图片不可访问");
+    }
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -193,14 +204,16 @@ function fixJson(str: string): string {
 }
 
 function extractFallbackData(content: string): any {
-  const extractNumber = (pattern: RegExp): number => {
+  console.log("开始 extractFallbackData 提取数据");
+  
+  const extractNumber = (pattern: RegExp): number | null => {
     const match = content.match(pattern);
     if (match) {
       const numStr = match[1].replace(/[^\d.]/g, '');
       const num = parseFloat(numStr);
       if (!isNaN(num)) return num;
     }
-    return 0;
+    return null;
   };
 
   const totalCalories = extractNumber(/total_calories["\s:]+[^\d]*([\d.]+)/i) || 
@@ -247,22 +260,22 @@ function extractFallbackData(content: string): any {
 }
 
 function normalizeNutritionData(data: any): any {
-  const extractNumber = (value: any): number => {
+  const extractNumber = (value: any, defaultValue: number): number => {
     if (typeof value === 'number') return value;
     if (typeof value === 'string') {
       const numStr = value.replace(/[^\d.]/g, '');
       const num = parseFloat(numStr);
-      return isNaN(num) ? 0 : num;
+      return isNaN(num) ? defaultValue : num;
     }
-    return 0;
+    return defaultValue;
   };
-
+  
   return {
-    total_calories: extractNumber(data.total_calories),
-    protein_g: extractNumber(data.protein_g),
-    fat_g: extractNumber(data.fat_g),
-    carbs_g: extractNumber(data.carbs_g || data.carbs),
-    health_score: Math.min(10, Math.max(1, Math.round(extractNumber(data.health_score)) || 5)),
+    total_calories: extractNumber(data.total_calories, 200),
+    protein_g: extractNumber(data.protein_g, 10),
+    fat_g: extractNumber(data.fat_g, 5),
+    carbs_g: extractNumber(data.carbs || data.carbs_g, 30),
+    health_score: Math.min(10, Math.max(1, Math.round(extractNumber(data.health_score, 5)))),
     advice: typeof data.advice === 'string' ? data.advice.substring(0, 200) : "保持均衡饮食"
   };
 }

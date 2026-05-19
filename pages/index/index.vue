@@ -30,7 +30,7 @@
           <text class="clear-icon">✕</text>
         </view>
       </view>
-      <text v-if="uploadedImageUrl" class="preview-hint">点击开始分析</text>
+      <text v-if="uploadSuccess && uploadedImageUrl" class="preview-hint">点击开始分析</text>
       <text v-else class="preview-hint uploading-hint">正在上传中...</text>
     </view>
 
@@ -91,7 +91,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { supabase } from '@/lib/supabase.js'
 
 const showInputModal = ref(false)
@@ -101,49 +101,93 @@ const uploadProgress = ref(0)
 const errorMsg = ref('')
 const uploadedImageUrl = ref('')
 const previewImageUrl = ref('')
+const uploadSuccess = ref(false)
 
 // 模拟历史记录数据
-const historyList = ref([
-  {
-    id: 1,
-    name: '鸡胸肉沙拉',
-    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=chicken%20salad%20with%20lettuce%20tomato%20healthy&image_size=square',
-    time: '今天 12:30',
-    score: 85,
-    nutrition: { calories: 320, protein: 28, carbs: 15, fat: 18 }
-  },
-  {
-    id: 2,
-    name: '牛油果吐司',
-    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=avocado%20toast%20on%20whole%20grain%20bread&image_size=square',
-    time: '今天 08:15',
-    score: 92,
-    nutrition: { calories: 285, protein: 12, carbs: 32, fat: 15 }
-  },
-  {
-    id: 3,
-    name: '红烧排骨',
-    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=braised%20pork%20ribs%20chinese%20style&image_size=square',
-    time: '昨天 18:45',
-    score: 65,
-    nutrition: { calories: 450, protein: 35, carbs: 10, fat: 32 }
-  },
-  {
-    id: 4,
-    name: '蔬菜豆腐汤',
-    image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=vegetable%20tofu%20soup%20chinese%20style&image_size=square',
-    time: '昨天 12:00',
-    score: 95,
-    nutrition: { calories: 120, protein: 15, carbs: 8, fat: 4 }
-  }
-])
+const historyList = ref([])
+const loadingHistory = ref(false)
 
-// 获取评分样式
 const getScoreClass = (score) => {
   if (score >= 80) return 'score-high'
   if (score >= 60) return 'score-medium'
   return 'score-low'
 }
+
+// 格式化时间显示
+const formatTime = (timestamp) => {
+  if (!timestamp) return '--'
+  const date = new Date(timestamp)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const recordDay = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  
+  const diffDays = Math.floor((today - recordDay) / (1000 * 60 * 60 * 24))
+  
+  let dayStr = ''
+  if (diffDays === 0) {
+    dayStr = '今天'
+  } else if (diffDays === 1) {
+    dayStr = '昨天'
+  } else if (diffDays === 2) {
+    dayStr = '前天'
+  } else if (diffDays < 7) {
+    const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    dayStr = weekDays[recordDay.getDay()]
+  } else {
+    dayStr = `${date.getMonth() + 1}月${date.getDate()}日`
+  }
+  
+  const hours = date.getHours().toString().padStart(2, '0')
+  const minutes = date.getMinutes().toString().padStart(2, '0')
+  return `${dayStr} ${hours}:${minutes}`
+}
+
+// 获取历史记录
+const loadHistory = async () => {
+  loadingHistory.value = true
+  try {
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) {
+      console.warn('用户未登录，跳过历史记录查询')
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('meals')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    if (error) {
+      console.error('查询历史记录失败:', error)
+      return
+    }
+
+    historyList.value = data.map(item => ({
+      id: item.id,
+      name: item.description || '未命名食物',
+      image: item.image_url || 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=food%20meal%20dish&image_size=square',
+      time: formatTime(item.created_at),
+      score: item.health_score || 0,
+      nutrition: {
+        calories: item.total_calories || 0,
+        protein: item.protein_g || 0,
+        carbs: item.carbs_g || 0,
+        fat: item.fat_g || 0
+      }
+    }))
+  } catch (e) {
+    console.error('加载历史记录异常:', e)
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+// 页面加载时获取历史记录
+onMounted(() => {
+  loadHistory()
+})
 
 // 拍照或选择图片
 const chooseImage = () => {
@@ -170,6 +214,7 @@ const uploadImage = async (tempPath) => {
   uploading.value = true
   uploadProgress.value = 0
   errorMsg.value = ''
+  uploadSuccess.value = false
 
   try {
     console.log('开始上传图片')
@@ -179,8 +224,16 @@ const uploadImage = async (tempPath) => {
     const fileName = `${user.id}/${Date.now()}.jpg`
     console.log('文件名:', fileName)
 
+    console.log('开始获取图片数据...')
     const response = await fetch(tempPath)
+    console.log('fetch 响应状态:', response.status)
+    
+    if (!response.ok) {
+      throw new Error('无法读取图片文件，请重试')
+    }
+    
     const blob = await response.blob()
+    console.log('Blob 大小:', blob.size, '类型:', blob.type)
 
     console.log('正在上传到 Supabase Storage...')
     const { error: uploadError } = await supabase.storage
@@ -200,6 +253,7 @@ const uploadImage = async (tempPath) => {
       .getPublicUrl(fileName)
 
     uploadedImageUrl.value = urlData.publicUrl
+    uploadSuccess.value = true
     previewImageUrl.value = '' // 清除本地预览，显示远程图
     console.log('公开 URL:', uploadedImageUrl.value)
 
@@ -210,6 +264,7 @@ const uploadImage = async (tempPath) => {
     setTimeout(() => errorMsg.value = '', 3000)
     previewImageUrl.value = '' // 上传失败清除预览
     uploadedImageUrl.value = ''
+    uploadSuccess.value = false
   } finally {
     uploading.value = false
     uploadProgress.value = 0
@@ -220,20 +275,42 @@ const uploadImage = async (tempPath) => {
 const clearPreview = () => {
   previewImageUrl.value = ''
   uploadedImageUrl.value = ''
+  uploadSuccess.value = false
 }
 
 // 开始分析
 const startAnalyze = async () => {
-  if (!uploadedImageUrl.value && !foodDescription.value.trim()) return
+  if (!uploadedImageUrl.value && !foodDescription.value.trim()) {
+    console.warn('没有图片或文字，无法分析')
+    return
+  }
 
   uni.showLoading({ title: '分析中...' })
+  
+  const currentImageUrl = uploadedImageUrl.value
+  const currentDescription = foodDescription.value.trim()
+  
+  console.log('开始分析', {
+    imageUrl: currentImageUrl,
+    description: currentDescription,
+    hasImage: !!currentImageUrl,
+    hasDescription: !!currentDescription
+  })
+  
+  uploadedImageUrl.value = ''
+  previewImageUrl.value = ''
+  foodDescription.value = ''
+  uploadSuccess.value = false
+  
   try {
     const { data, error } = await supabase.functions.invoke('analyze-food', {
       body: {
-        imageUrl: uploadedImageUrl.value || null,
-        description: foodDescription.value.trim() || null,
+        imageUrl: currentImageUrl || null,
+        description: currentDescription || null,
       },
     })
+
+    console.log('AI 返回结果:', data)
 
     uni.hideLoading()
 
@@ -263,8 +340,8 @@ const startAnalyze = async () => {
 
       const { data: insertData, error: insertError } = await supabase.from('meals').insert({
         user_id: user.id,
-        image_url: uploadedImageUrl.value || null,
-        description: foodDescription.value.trim() || null,
+        image_url: currentImageUrl || null,
+        description: currentDescription || null,
         total_calories: data.total_calories,
         protein_g: data.protein_g,
         fat_g: data.fat_g,
@@ -276,6 +353,7 @@ const startAnalyze = async () => {
       if (insertError) throw insertError
 
       const recordId = insertData[0].id
+      await loadHistory()
       uni.navigateTo({ url: '/pages/result/result?id=' + recordId })
     } catch (e) {
       console.error('保存失败:', e)
@@ -300,9 +378,21 @@ const submitDescription = () => {
 
 // 处理预览区域点击
 const handlePreviewClick = () => {
-  if (!uploadedImageUrl.value) {
-    return // 还在上传中，不处理点击
+  console.log('预览区域点击', {
+    uploadedImageUrl: uploadedImageUrl.value,
+    uploadSuccess: uploadSuccess.value,
+    uploading: uploading.value
+  })
+  
+  if (!uploadedImageUrl.value || !uploadSuccess.value) {
+    uni.showToast({ 
+      title: uploading.value ? '图片上传中，请稍候' : '图片上传失败，请重新上传', 
+      icon: 'none',
+      duration: 2000 
+    })
+    return
   }
+  
   // 调用分析
   startAnalyze()
 }
