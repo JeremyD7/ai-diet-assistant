@@ -3,7 +3,27 @@
     <!-- 今日统计卡片 -->
     <view class="summary-card">
       <text class="summary-title">今日摄入</text>
-      <text class="summary-value">-- 千卡</text>
+      <view class="summary-stats">
+        <view class="stat-item">
+          <text class="stat-value">{{ todayStats.calories }}</text>
+          <text class="stat-label">千卡</text>
+        </view>
+        <view class="stat-divider"></view>
+        <view class="stat-item">
+          <text class="stat-label">蛋白质</text>
+          <text class="stat-value">{{ todayStats.protein }}g</text>
+        </view>
+        <view class="stat-divider"></view>
+        <view class="stat-item">
+          <text class="stat-label">碳水</text>
+          <text class="stat-value">{{ todayStats.carbs }}g</text>
+        </view>
+        <view class="stat-divider"></view>
+        <view class="stat-item">
+          <text class="stat-label">脂肪</text>
+          <text class="stat-value">{{ todayStats.fat }}g</text>
+        </view>
+      </view>
     </view>
 
     <!-- 操作卡片区域 -->
@@ -103,6 +123,14 @@ const uploadedImageUrl = ref('')
 const previewImageUrl = ref('')
 const uploadSuccess = ref(false)
 
+// 今日统计数据
+const todayStats = ref({
+  calories: 0,
+  protein: 0,
+  carbs: 0,
+  fat: 0
+})
+
 // 模拟历史记录数据
 const historyList = ref([])
 const loadingHistory = ref(false)
@@ -140,6 +168,53 @@ const formatTime = (timestamp) => {
   const hours = date.getHours().toString().padStart(2, '0')
   const minutes = date.getMinutes().toString().padStart(2, '0')
   return `${dayStr} ${hours}:${minutes}`
+}
+
+// 计算今天的营养统计
+const loadTodayStats = async () => {
+  try {
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) {
+      console.warn('用户未登录，跳过今日统计')
+      return
+    }
+
+    const today = new Date()
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
+
+    const { data, error } = await supabase
+      .from('meals')
+      .select('total_calories, protein_g, carbs_g, fat_g')
+      .eq('user_id', user.id)
+      .gte('created_at', startOfDay.toISOString())
+      .lt('created_at', endOfDay.toISOString())
+
+    if (error) {
+      console.error('查询今日统计失败:', error)
+      return
+    }
+
+    let calories = 0, protein = 0, carbs = 0, fat = 0
+
+    if (data && data.length > 0) {
+      data.forEach(item => {
+        calories += item.total_calories || 0
+        protein += item.protein_g || 0
+        carbs += item.carbs_g || 0
+        fat += item.fat_g || 0
+      })
+    }
+
+    todayStats.value = {
+      calories: Math.round(calories),
+      protein: Math.round(protein * 10) / 10,
+      carbs: Math.round(carbs * 10) / 10,
+      fat: Math.round(fat * 10) / 10
+    }
+  } catch (e) {
+    console.error('加载今日统计异常:', e)
+  }
 }
 
 // 获取历史记录
@@ -186,6 +261,7 @@ const loadHistory = async () => {
 
 // 页面加载时获取历史记录
 onMounted(() => {
+  loadTodayStats()
   loadHistory()
 })
 
@@ -347,12 +423,13 @@ const startAnalyze = async () => {
         fat_g: data.fat_g,
         carbs_g: data.carbs_g,
         health_score: data.health_score,
-        // advice: data.advice
+        advice: data.advice
       }).select()
 
       if (insertError) throw insertError
 
       const recordId = insertData[0].id
+      await loadTodayStats()
       await loadHistory()
       uni.navigateTo({ url: '/pages/result/result?id=' + recordId })
     } catch (e) {
@@ -423,13 +500,38 @@ const viewDetail = (id) => {
   font-size: 28rpx;
   color: rgba(255, 255, 255, 0.8);
   display: block;
-  margin-bottom: 8rpx;
+  margin-bottom: 16rpx;
 }
 
-.summary-value {
-  font-size: 56rpx;
+.summary-stats {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+}
+
+.stat-item {
+  flex: 1;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 40rpx;
   font-weight: bold;
   color: #fff;
+  display: block;
+}
+
+.stat-label {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.8);
+  display: block;
+  margin-top: 4rpx;
+}
+
+.stat-divider {
+  width: 1rpx;
+  height: 60rpx;
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .action-section {
