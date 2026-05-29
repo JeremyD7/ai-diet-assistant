@@ -93,7 +93,10 @@
 					</view>
 				</view>
 
-				<view class="bottom-action">
+				<view class="bottom-action" :class="{ 'action-row': currentMealId }">
+					<view v-if="currentMealId" class="delete-record-btn" @tap="confirmDeleteMeal">
+						<text class="delete-record-text">{{ deleting ? '删除中...' : '删除记录' }}</text>
+					</view>
 					<view class="home-btn" @tap="goHome">
 						<text class="home-icon">🏠</text>
 						<text class="home-text">返回首页</text>
@@ -111,10 +114,14 @@ import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { supabase } from '@/lib/supabase.js'
 import { requireAuth } from '@/utils/router.js'
+import { deleteMealRecord } from '@/utils/mealDeletion.js'
 
 const loading = ref(true)
 const errorMsg = ref('')
+const currentMealId = ref('')
+const deleting = ref(false)
 const mealData = ref({
+	id: '',
 	total_calories: 0,
 	protein_g: 0,
 	fat_g: 0,
@@ -130,8 +137,10 @@ onLoad(async (options) => {
 	await checkLogin()
 
 	if (options.id) {
+		currentMealId.value = options.id
 		loadMealById(options.id)
 	} else if (options.desc) {
+		currentMealId.value = ''
 		loadMealByDesc(decodeURIComponent(options.desc))
 	} else {
 		errorMsg.value = '未找到相关记录'
@@ -185,6 +194,7 @@ const loadMealById = async (id) => {
 const loadMealByDesc = (desc) => {
 	loading.value = false
 	mealData.value = {
+		id: '',
 		total_calories: 0,
 		protein_g: 0,
 		fat_g: 0,
@@ -236,6 +246,49 @@ const goBack = () => {
 
 const goHome = () => {
 	uni.switchTab({ url: '/pages/index/index' })
+}
+
+const confirmDeleteMeal = () => {
+	if (!currentMealId.value || deleting.value) return
+
+	uni.showModal({
+		title: '删除记录',
+		content: '确定删除这条分析记录吗？对应的食物图片也会一并删除。',
+		confirmText: '删除',
+		confirmColor: '#F44336',
+		success: async (res) => {
+			if (!res.confirm) return
+			await deleteCurrentMeal()
+		}
+	})
+}
+
+const deleteCurrentMeal = async () => {
+	deleting.value = true
+	uni.showLoading({ title: '删除中...' })
+
+	try {
+		const { data: { user }, error: userError } = await supabase.auth.getUser()
+		if (userError || !user) throw new Error('请先登录')
+
+		await deleteMealRecord({
+			supabase,
+			mealId: currentMealId.value,
+			userId: user.id
+		})
+
+		uni.hideLoading()
+		uni.showToast({ title: '已删除', icon: 'success' })
+		setTimeout(() => {
+			goHome()
+		}, 500)
+	} catch (e) {
+		console.error('删除失败:', e)
+		uni.hideLoading()
+		uni.showToast({ title: e.message || '删除失败', icon: 'none', duration: 3000 })
+	} finally {
+		deleting.value = false
+	}
 }
 </script>
 
@@ -519,6 +572,11 @@ const goHome = () => {
 	padding: 32rpx;
 }
 
+.action-row {
+	display: flex;
+	gap: 20rpx;
+}
+
 .home-btn {
 	background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
 	border-radius: var(--radius-lg);
@@ -528,6 +586,7 @@ const goHome = () => {
 	justify-content: center;
 	gap: 12rpx;
 	box-shadow: var(--shadow-md);
+	flex: 1;
 }
 
 .home-btn:active {
@@ -543,6 +602,27 @@ const goHome = () => {
 	font-size: 30rpx;
 	font-weight: 600;
 	color: white;
+}
+
+.delete-record-btn {
+	background: #FFEBEE;
+	border-radius: var(--radius-lg);
+	padding: 24rpx;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1;
+}
+
+.delete-record-btn:active {
+	background: #FFCDD2;
+	transform: scale(0.98);
+}
+
+.delete-record-text {
+	font-size: 30rpx;
+	font-weight: 600;
+	color: #F44336;
 }
 
 .bottom-spacer {

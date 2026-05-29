@@ -82,6 +82,9 @@
             <text class="history-calories">{{ item.nutrition.calories }}千卡</text>
           </view>
         </view>
+        <view class="delete-btn" @tap.stop="confirmDeleteMeal(item.id)">
+          <text class="delete-text">{{ deletingMealId === item.id ? '删除中' : '删除' }}</text>
+        </view>
         <view class="history-arrow">›</view>
       </view>
     </view>
@@ -111,8 +114,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { supabase } from '@/lib/supabase.js'
+import { deleteMealRecord } from '@/utils/mealDeletion.js'
 
 const showInputModal = ref(false)
 const foodDescription = ref('')
@@ -122,6 +127,7 @@ const errorMsg = ref('')
 const uploadedImageUrl = ref('')
 const previewImageUrl = ref('')
 const uploadSuccess = ref(false)
+const deletingMealId = ref('')
 
 // 今日统计数据
 const todayStats = ref({
@@ -259,8 +265,8 @@ const loadHistory = async () => {
   }
 }
 
-// 页面加载时获取历史记录
-onMounted(() => {
+// 页面每次显示时刷新记录，避免从详情页删除后看到旧数据
+onShow(() => {
   loadTodayStats()
   loadHistory()
 })
@@ -477,6 +483,50 @@ const handlePreviewClick = () => {
 // 查看详情
 const viewDetail = (id) => {
   uni.navigateTo({ url: `/pages/result/result?id=${id}` })
+}
+
+// 删除分析记录及对应 Storage 图片
+const confirmDeleteMeal = (id) => {
+  if (deletingMealId.value) return
+
+  uni.showModal({
+    title: '删除记录',
+    content: '确定删除这条分析记录吗？对应的食物图片也会一并删除。',
+    confirmText: '删除',
+    confirmColor: '#F44336',
+    success: async (res) => {
+      if (!res.confirm) return
+      await deleteMeal(id)
+    }
+  })
+}
+
+const deleteMeal = async (id) => {
+  deletingMealId.value = id
+  uni.showLoading({ title: '删除中...' })
+
+  try {
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) throw new Error('请先登录')
+
+    await deleteMealRecord({
+      supabase,
+      mealId: id,
+      userId: user.id
+    })
+
+    historyList.value = historyList.value.filter(item => item.id !== id)
+    await loadTodayStats()
+    await loadHistory()
+    uni.hideLoading()
+    uni.showToast({ title: '已删除', icon: 'success' })
+  } catch (e) {
+    console.error('删除失败:', e)
+    uni.hideLoading()
+    uni.showToast({ title: e.message || '删除失败', icon: 'none', duration: 3000 })
+  } finally {
+    deletingMealId.value = ''
+  }
 }
 </script>
 
@@ -705,6 +755,7 @@ const viewDetail = (id) => {
 
 .history-info {
   flex: 1;
+  min-width: 0;
 }
 
 .history-name {
@@ -757,6 +808,23 @@ const viewDetail = (id) => {
 .history-arrow {
   font-size: 40rpx;
   color: #ddd;
+}
+
+.delete-btn {
+  padding: 12rpx 16rpx;
+  margin-left: 12rpx;
+  border-radius: 10rpx;
+  background: #FFEBEE;
+}
+
+.delete-btn:active {
+  background: #FFCDD2;
+}
+
+.delete-text {
+  font-size: 24rpx;
+  color: #F44336;
+  font-weight: 600;
 }
 
 .empty-state {
