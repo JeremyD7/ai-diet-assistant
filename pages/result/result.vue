@@ -26,7 +26,7 @@
 
 				<view class="content-wrapper">
 					<view class="description-card">
-						<text class="description-text">{{ mealData.description || '食物记录' }}</text>
+						<text class="description-text">{{ mealData.food_name || mealData.description || '食物记录' }}</text>
 					</view>
 
 					<view class="nutrition-section">
@@ -87,6 +87,37 @@
 						</view>
 					</view>
 
+					<!-- 搭配建议 -->
+					<view v-if="mealData.pairing_suggestions && mealData.pairing_suggestions.length > 0" class="pairing-section">
+						<view class="section-header">
+							<text class="section-title">搭配建议</text>
+							<text class="ai-badge pairing-badge">AI</text>
+						</view>
+						<view class="pairing-card">
+							<view v-for="(item, index) in mealData.pairing_suggestions" :key="index" class="pairing-item">
+								<view class="pairing-header">
+									<text class="pairing-icon">🥗</text>
+									<text class="pairing-name">{{ item.name }}</text>
+								</view>
+								<text class="pairing-reason">{{ item.reason }}</text>
+							</view>
+						</view>
+					</view>
+
+					<!-- 烹饪建议 -->
+					<view v-if="mealData.cooking_tips && mealData.cooking_tips.length > 0" class="cooking-section">
+						<view class="section-header">
+							<text class="section-title">烹饪建议</text>
+							<text class="ai-badge cooking-badge">AI</text>
+						</view>
+						<view class="cooking-card">
+							<view v-for="(tip, index) in mealData.cooking_tips" :key="index" class="cooking-item">
+								<text class="cooking-index">{{ index + 1 }}</text>
+								<text class="cooking-text">{{ tip }}</text>
+							</view>
+						</view>
+					</view>
+
 					<view class="time-section">
 						<text class="time-label">创建时间</text>
 						<text class="time-value">{{ formatTime(mealData.created_at) }}</text>
@@ -122,12 +153,15 @@ const currentMealId = ref('')
 const deleting = ref(false)
 const mealData = ref({
 	id: '',
+	food_name: '',
 	total_calories: 0,
 	protein_g: 0,
 	fat_g: 0,
 	carbs_g: 0,
 	health_score: 0,
 	advice: '',
+	pairing_suggestions: [],
+	cooking_tips: [],
 	image_url: '',
 	description: '',
 	created_at: ''
@@ -195,12 +229,15 @@ const loadMealByDesc = (desc) => {
 	loading.value = false
 	mealData.value = {
 		id: '',
+		food_name: '',
 		total_calories: 0,
 		protein_g: 0,
 		fat_g: 0,
 		carbs_g: 0,
 		health_score: 0,
 		advice: '根据您描述的食物，请等待AI分析完成。',
+		pairing_suggestions: [],
+		cooking_tips: [],
 		image_url: '',
 		description: desc,
 		created_at: new Date().toISOString()
@@ -404,6 +441,14 @@ const deleteCurrentMeal = async () => {
 	font-weight: 600;
 }
 
+.pairing-badge {
+	background: #2196F3;
+}
+
+.cooking-badge {
+	background: #FF9800;
+}
+
 .nutrition-grid {
 	display: grid;
 	grid-template-columns: repeat(4, 1fr);
@@ -545,6 +590,104 @@ const deleteCurrentMeal = async () => {
 	font-size: 26rpx;
 	color: var(--text-secondary);
 	line-height: 1.6;
+}
+
+/* 搭配建议 */
+.pairing-section {
+	margin-top: 24rpx;
+}
+
+.pairing-card {
+	background: linear-gradient(135deg, #e3f2fd 0%, #e8eaf6 100%);
+	border-radius: var(--radius-lg);
+	padding: 24rpx;
+}
+
+.pairing-item {
+	padding: 16rpx 0;
+	border-bottom: 1rpx solid rgba(33, 150, 243, 0.15);
+}
+
+.pairing-item:last-child {
+	border-bottom: none;
+	padding-bottom: 0;
+}
+
+.pairing-item:first-child {
+	padding-top: 0;
+}
+
+.pairing-header {
+	display: flex;
+	align-items: center;
+	gap: 8rpx;
+	margin-bottom: 8rpx;
+}
+
+.pairing-icon {
+	font-size: 28rpx;
+}
+
+.pairing-name {
+	font-size: 28rpx;
+	font-weight: 600;
+	color: #1565C0;
+}
+
+.pairing-reason {
+	font-size: 24rpx;
+	color: #546E7A;
+	line-height: 1.5;
+	padding-left: 36rpx;
+}
+
+/* 烹饪建议 */
+.cooking-section {
+	margin-top: 24rpx;
+}
+
+.cooking-card {
+	background: linear-gradient(135deg, #fff3e0 0%, #fce4ec 100%);
+	border-radius: var(--radius-lg);
+	padding: 24rpx;
+}
+
+.cooking-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 16rpx;
+	padding: 16rpx 0;
+	border-bottom: 1rpx solid rgba(255, 152, 0, 0.15);
+}
+
+.cooking-item:last-child {
+	border-bottom: none;
+	padding-bottom: 0;
+}
+
+.cooking-item:first-child {
+	padding-top: 0;
+}
+
+.cooking-index {
+	width: 40rpx;
+	height: 40rpx;
+	background: #FF9800;
+	color: #fff;
+	border-radius: 50%;
+	font-size: 22rpx;
+	font-weight: bold;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.cooking-text {
+	font-size: 26rpx;
+	color: #5D4037;
+	line-height: 1.6;
+	flex: 1;
 }
 
 .time-section {

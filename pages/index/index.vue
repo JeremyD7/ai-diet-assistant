@@ -100,13 +100,58 @@
     <view v-if="showInputModal" class="modal-mask" @tap="showInputModal = false">
       <view class="modal-content" @tap.stop>
         <text class="modal-title">输入食物描述</text>
-        <textarea v-model="foodDescription" placeholder="请输入食物名称或描述..." class="modal-input" :disabled="uploading" />
+        <textarea v-model="foodDescription" placeholder="请输入食物名称或描述..." class="modal-input" :disabled="analyzing" />
         <view class="modal-actions">
           <button class="modal-btn cancel-btn" @tap="showInputModal = false">取消</button>
-          <button class="modal-btn confirm-btn" :disabled="!foodDescription.trim() || uploading"
+          <button class="modal-btn confirm-btn" :disabled="!foodDescription.trim() || analyzing"
             @tap="submitDescription">
-            {{ uploading ? '上传中...' : '开始分析' }}
+            {{ analyzing ? '分析中...' : '开始分析' }}
           </button>
+        </view>
+      </view>
+    </view>
+
+    <!-- AI 分析流式进度弹窗 -->
+    <view v-if="analyzing" class="analyze-stream-mask">
+      <view class="analyze-stream-modal">
+        <text class="stream-title">AI 正在分析...</text>
+
+        <!-- 步骤指示器 -->
+        <view class="stream-steps">
+          <view class="stream-step" :class="{ active: currentStep >= 1, done: currentStep > 1 }">
+            <view class="step-dot">
+              <text v-if="currentStep > 1" class="step-check">✓</text>
+              <text v-else class="step-icon">🔍</text>
+            </view>
+            <text class="step-label">识别食物</text>
+          </view>
+          <view class="step-line" :class="{ done: currentStep > 1 }"></view>
+          <view class="stream-step" :class="{ active: currentStep >= 2, done: currentStep > 2 }">
+            <view class="step-dot">
+              <text v-if="currentStep > 2" class="step-check">✓</text>
+              <text v-else class="step-icon">📊</text>
+            </view>
+            <text class="step-label">分析营养</text>
+          </view>
+          <view class="step-line" :class="{ done: currentStep > 2 }"></view>
+          <view class="stream-step" :class="{ active: currentStep >= 3, done: currentStep > 3 }">
+            <view class="step-dot">
+              <text v-if="currentStep > 3" class="step-check">✓</text>
+              <text v-else class="step-icon">💡</text>
+            </view>
+            <text class="step-label">生成建议</text>
+          </view>
+        </view>
+
+        <!-- 打字机显示区域 -->
+        <view class="typewriter-area">
+          <scroll-view class="typewriter-scroll" scroll-y="true" :scroll-top="scrollTop">
+            <text class="typewriter-text">{{ streamDisplay || '▌' }}</text>
+          </scroll-view>
+        </view>
+
+        <view class="stream-cancel" @tap="cancelAnalyze">
+          <text class="cancel-text">取消</text>
         </view>
       </view>
     </view>
@@ -129,6 +174,14 @@ const previewImageUrl = ref('')
 const uploadSuccess = ref(false)
 const deletingMealId = ref('')
 
+// 流式分析状态
+const analyzing = ref(false)
+const streamDisplay = ref('')
+const currentStep = ref(1)
+const scrollTop = ref(0)
+let abortController = null
+let stepTimer = null
+
 // 今日统计数据
 const todayStats = ref({
   calories: 0,
@@ -147,6 +200,49 @@ const getScoreClass = (score) => {
   return 'score-low'
 }
 
+// 根据流式内容更新步骤状态
+const updateStepFromContent = (content) => {
+  if (content.includes('total_calories') || content.includes('protein_g') || content.includes('热量') || content.includes('food_name')) {
+    if (currentStep.value < 2) currentStep.value = 2
+  }
+  if (content.includes('advice') || content.includes('pairing_suggestions') || content.includes('cooking_tips')) {
+    if (currentStep.value < 3) currentStep.value = 3
+  }
+}
+
+// 启动步骤自动推进定时器
+const startStepTimer = () => {
+  clearStepTimer()
+  // 3秒后自动跳到步骤2，6秒后跳到步骤3
+  stepTimer = setTimeout(() => {
+    if (currentStep.value < 2) currentStep.value = 2
+    stepTimer = setTimeout(() => {
+      if (currentStep.value < 3) currentStep.value = 3
+    }, 3000)
+  }, 3000)
+}
+
+// 清除步骤定时器
+const clearStepTimer = () => {
+  if (stepTimer) {
+    clearTimeout(stepTimer)
+    stepTimer = null
+  }
+}
+
+// 取消分析
+const cancelAnalyze = () => {
+  clearStepTimer()
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
+  analyzing.value = false
+  streamDisplay.value = ''
+  currentStep.value = 1
+  uni.showToast({ title: '已取消分析', icon: 'none' })
+}
+
 // 格式化时间显示
 const formatTime = (timestamp) => {
   if (!timestamp) return '--'
@@ -154,9 +250,9 @@ const formatTime = (timestamp) => {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const recordDay = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  
+
   const diffDays = Math.floor((today - recordDay) / (1000 * 60 * 60 * 24))
-  
+
   let dayStr = ''
   if (diffDays === 0) {
     dayStr = '今天'
@@ -170,7 +266,7 @@ const formatTime = (timestamp) => {
   } else {
     dayStr = `${date.getMonth() + 1}月${date.getDate()}日`
   }
-  
+
   const hours = date.getHours().toString().padStart(2, '0')
   const minutes = date.getMinutes().toString().padStart(2, '0')
   return `${dayStr} ${hours}:${minutes}`
@@ -247,7 +343,7 @@ const loadHistory = async () => {
 
     historyList.value = data.map(item => ({
       id: item.id,
-      name: item.description || '未命名食物',
+      name: item.food_name || item.description || '未命名食物',
       image: item.image_url || 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=food%20meal%20dish&image_size=square',
       time: formatTime(item.created_at),
       score: item.health_score || 0,
@@ -309,11 +405,11 @@ const uploadImage = async (tempPath) => {
     console.log('开始获取图片数据...')
     const response = await fetch(tempPath)
     console.log('fetch 响应状态:', response.status)
-    
+
     if (!response.ok) {
       throw new Error('无法读取图片文件，请重试')
     }
-    
+
     const blob = await response.blob()
     console.log('Blob 大小:', blob.size, '类型:', blob.type)
 
@@ -360,61 +456,130 @@ const clearPreview = () => {
   uploadSuccess.value = false
 }
 
-// 开始分析
+// 开始分析（SSE 流式）
 const startAnalyze = async () => {
   if (!uploadedImageUrl.value && !foodDescription.value.trim()) {
     console.warn('没有图片或文字，无法分析')
     return
   }
 
-  uni.showLoading({ title: '分析中...' })
-  
   const currentImageUrl = uploadedImageUrl.value
   const currentDescription = foodDescription.value.trim()
-  
-  console.log('开始分析', {
+
+  console.log('开始流式分析', {
     imageUrl: currentImageUrl,
     description: currentDescription,
     hasImage: !!currentImageUrl,
     hasDescription: !!currentDescription
   })
-  
+
   uploadedImageUrl.value = ''
   previewImageUrl.value = ''
   foodDescription.value = ''
   uploadSuccess.value = false
-  
+
+  // 打开流式分析弹窗
+  analyzing.value = true
+  streamDisplay.value = ''
+  currentStep.value = 1
+  startStepTimer()
+
+  // 创建 AbortController 用于取消
+  abortController = new AbortController()
+
   try {
-    const { data, error } = await supabase.functions.invoke('analyze-food', {
-      body: {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      throw new Error('未登录，请重新登录')
+    }
+
+    const functionUrl = 'https://keobzofuuvvyixnhajdg.supabase.co/functions/v1/analyze-food'
+    const anonKey = 'sb_publishable_rMmpQz3PABloXGv6Iy6w6A_lj3U0ZXC'
+
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': anonKey,
+      },
+      body: JSON.stringify({
         imageUrl: currentImageUrl || null,
         description: currentDescription || null,
-      },
+      }),
+      signal: abortController.signal,
     })
 
-    console.log('AI 返回结果:', data)
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error('分析请求失败: ' + response.status)
+    }
 
-    uni.hideLoading()
+    // 读取 SSE 流
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResult = null
 
-    if (error) {
-      console.error('函数调用错误:', error)
-      uni.showToast({ title: '分析失败: ' + error.message, icon: 'none', duration: 3000 })
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith('data: ')) continue
+
+        const dataStr = trimmed.slice(6)
+        try {
+          const data = JSON.parse(dataStr)
+
+          if (data.error) {
+            throw new Error(data.error)
+          }
+
+          if (data.done) {
+            finalResult = data.result
+            console.log('流式分析完成:', finalResult)
+          } else if (data.token) {
+            streamDisplay.value += data.token
+            updateStepFromContent(streamDisplay.value)
+            scrollTop.value = scrollTop.value + 9999
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) {
+            throw e
+          }
+        }
+      }
+    }
+
+    // 流结束，关闭弹窗
+    clearStepTimer()
+    analyzing.value = false
+    streamDisplay.value = ''
+    currentStep.value = 1
+    abortController = null
+
+    if (!finalResult) {
+      uni.showToast({ title: '分析未返回结果', icon: 'none', duration: 3000 })
       return
     }
 
-    if (data?.error) {
-      console.error('AI返回错误:', data.error)
-      uni.showToast({ title: 'AI错误: ' + data.error, icon: 'none', duration: 3000 })
+    if (finalResult.error) {
+      uni.showToast({ title: 'AI错误: ' + finalResult.error, icon: 'none', duration: 3000 })
       return
     }
 
-    if (!data?.total_calories) {
-      console.warn('返回数据格式异常:', data)
+    if (!finalResult.total_calories) {
       uni.showToast({ title: '返回数据格式异常', icon: 'none', duration: 3000 })
       return
     }
 
-    console.log('AI 分析结果:', data)
+    console.log('AI 分析结果:', finalResult)
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -424,12 +589,15 @@ const startAnalyze = async () => {
         user_id: user.id,
         image_url: currentImageUrl || null,
         description: currentDescription || null,
-        total_calories: data.total_calories,
-        protein_g: data.protein_g,
-        fat_g: data.fat_g,
-        carbs_g: data.carbs_g,
-        health_score: data.health_score,
-        advice: data.advice
+        food_name: finalResult.food_name || null,
+        total_calories: finalResult.total_calories,
+        protein_g: finalResult.protein_g,
+        fat_g: finalResult.fat_g,
+        carbs_g: finalResult.carbs_g,
+        health_score: finalResult.health_score,
+        advice: finalResult.advice,
+        pairing_suggestions: finalResult.pairing_suggestions || [],
+        cooking_tips: finalResult.cooking_tips || []
       }).select()
 
       if (insertError) throw insertError
@@ -443,10 +611,17 @@ const startAnalyze = async () => {
       uni.showToast({ title: '保存失败: ' + e.message, icon: 'none', duration: 3000 })
     }
   } catch (e) {
-    uni.hideLoading()
-    console.error('调用异常 - 完整错误:', e)
-    console.error('错误消息:', e.message)
-    uni.showToast({ title: e.message || '请求失败', icon: 'none', duration: 3000 })
+    if (e.name === 'AbortError') {
+      console.log('分析已被用户取消')
+    } else {
+      console.error('分析异常:', e)
+      clearStepTimer()
+      analyzing.value = false
+      streamDisplay.value = ''
+      currentStep.value = 1
+      abortController = null
+      uni.showToast({ title: e.message || '请求失败', icon: 'none', duration: 3000 })
+    }
   }
 }
 
@@ -466,16 +641,16 @@ const handlePreviewClick = () => {
     uploadSuccess: uploadSuccess.value,
     uploading: uploading.value
   })
-  
+
   if (!uploadedImageUrl.value || !uploadSuccess.value) {
-    uni.showToast({ 
-      title: uploading.value ? '图片上传中，请稍候' : '图片上传失败，请重新上传', 
+    uni.showToast({
+      title: uploading.value ? '图片上传中，请稍候' : '图片上传失败，请重新上传',
       icon: 'none',
-      duration: 2000 
+      duration: 2000
     })
     return
   }
-  
+
   // 调用分析
   startAnalyze()
 }
@@ -917,5 +1092,158 @@ const deleteMeal = async (id) => {
 
 .confirm-btn[disabled] {
   background: #ccc;
+}
+
+/* 流式分析弹窗 */
+.analyze-stream-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1100;
+}
+
+.analyze-stream-modal {
+  width: 90%;
+  max-width: 650rpx;
+  background: #1a1a2e;
+  border-radius: 20rpx;
+  padding: 40rpx 32rpx 32rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stream-title {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #e0e0e0;
+  margin-bottom: 32rpx;
+}
+
+/* 步骤指示器 */
+.stream-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 32rpx;
+  width: 100%;
+}
+
+.stream-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.step-dot {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background: #2a2a4a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.step-dot .step-icon {
+  font-size: 28rpx;
+}
+
+.step-dot .step-check {
+  font-size: 28rpx;
+  color: #fff;
+  font-weight: bold;
+}
+
+.stream-step.active .step-dot {
+  background: #4CAF50;
+  box-shadow: 0 0 16rpx rgba(76, 175, 80, 0.5);
+  animation: step-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 8rpx rgba(76, 175, 80, 0.4); }
+  50% { box-shadow: 0 0 24rpx rgba(76, 175, 80, 0.8); }
+}
+
+.stream-step.done .step-dot {
+  background: #4CAF50;
+}
+
+.step-label {
+  font-size: 22rpx;
+  color: #888;
+  transition: color 0.3s ease;
+}
+
+.stream-step.active .step-label {
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+.stream-step.done .step-label {
+  color: #4CAF50;
+}
+
+.step-line {
+  width: 80rpx;
+  height: 2rpx;
+  background: #2a2a4a;
+  margin: 0 12rpx;
+  margin-top: -24rpx;
+  transition: background 0.3s ease;
+}
+
+.step-line.done {
+  background: #4CAF50;
+}
+
+/* 打字机区域 */
+.typewriter-area {
+  width: 100%;
+  height: 300rpx;
+  background: #0d0d1a;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  border: 1rpx solid #2a2a4a;
+  margin-bottom: 24rpx;
+}
+
+.typewriter-scroll {
+  width: 100%;
+  height: 100%;
+}
+
+.typewriter-text {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 24rpx;
+  color: #4CAF50;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.stream-cancel {
+  padding: 20rpx 60rpx;
+  border-radius: 40rpx;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1rpx solid rgba(255, 255, 255, 0.2);
+}
+
+.stream-cancel:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.cancel-text {
+  font-size: 28rpx;
+  color: #999;
 }
 </style>
