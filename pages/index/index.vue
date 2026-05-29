@@ -369,46 +369,14 @@ onShow(() => {
 
 // 拍照或选择图片
 const chooseImage = () => {
-  uni.showActionSheet({
-    itemList: ['拍照', '从相册选择'],
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['camera', 'album'],
     success: (res) => {
-      if (res.tapIndex === 0) {
-        takePhoto()
-      } else {
-        pickFromAlbum()
-      }
-    }
-  })
-}
-
-// 直接调用摄像头拍照
-const takePhoto = () => {
-  uni.chooseImage({
-    count: 1,
-    sizeType: ['compressed'],
-    sourceType: ['camera'],
-    success: (imgRes) => {
-      previewImageUrl.value = imgRes.tempFilePaths[0]
-      uploadImage(imgRes.tempFilePaths[0])
-    },
-    fail: (err) => {
-      if (err.errMsg.indexOf('cancel') === -1) {
-        errorMsg.value = '获取图片失败'
-        setTimeout(() => errorMsg.value = '', 3000)
-      }
-    }
-  })
-}
-
-// 从相册选择图片
-const pickFromAlbum = () => {
-  uni.chooseImage({
-    count: 1,
-    sizeType: ['compressed'],
-    sourceType: ['album'],
-    success: (imgRes) => {
-      previewImageUrl.value = imgRes.tempFilePaths[0]
-      uploadImage(imgRes.tempFilePaths[0])
+      const tempPath = res.tempFilePaths[0]
+      previewImageUrl.value = tempPath
+      uploadImage(tempPath)
     },
     fail: (err) => {
       if (err.errMsg.indexOf('cancel') === -1) {

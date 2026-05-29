@@ -1,15 +1,14 @@
 <script>
-import { requireAuth } from '@/utils/router.js'
+import { supabase } from '@/lib/supabase.js'
 
 export default {
 	onLaunch: async function () {
 		console.log('App Launch')
-		// 应用启动时检查登录状态（只在首页启动时检查）
 		try {
-			const pages = getCurrentPages()
-			if (pages.length > 0) {
-				const currentPage = pages[0]
-				await requireAuth(currentPage.route || '')
+			const { data: { user } } = await supabase.auth.getUser()
+			if (user) {
+				console.log('已有登录状态，跳转到首页')
+				uni.reLaunch({ url: '/pages/index/index' })
 			}
 		} catch (e) {
 			console.error('启动时检查登录状态失败:', e)
