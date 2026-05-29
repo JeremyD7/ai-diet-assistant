@@ -369,14 +369,46 @@ onShow(() => {
 
 // 拍照或选择图片
 const chooseImage = () => {
+  uni.showActionSheet({
+    itemList: ['拍照', '从相册选择'],
+    success: (res) => {
+      if (res.tapIndex === 0) {
+        takePhoto()
+      } else {
+        pickFromAlbum()
+      }
+    }
+  })
+}
+
+// 直接调用摄像头拍照
+const takePhoto = () => {
   uni.chooseImage({
     count: 1,
     sizeType: ['compressed'],
-    sourceType: ['camera', 'album'],
-    success: (res) => {
-      const tempPath = res.tempFilePaths[0]
-      previewImageUrl.value = tempPath // 立即显示本地预览
-      uploadImage(tempPath)
+    sourceType: ['camera'],
+    success: (imgRes) => {
+      previewImageUrl.value = imgRes.tempFilePaths[0]
+      uploadImage(imgRes.tempFilePaths[0])
+    },
+    fail: (err) => {
+      if (err.errMsg.indexOf('cancel') === -1) {
+        errorMsg.value = '获取图片失败'
+        setTimeout(() => errorMsg.value = '', 3000)
+      }
+    }
+  })
+}
+
+// 从相册选择图片
+const pickFromAlbum = () => {
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['album'],
+    success: (imgRes) => {
+      previewImageUrl.value = imgRes.tempFilePaths[0]
+      uploadImage(imgRes.tempFilePaths[0])
     },
     fail: (err) => {
       if (err.errMsg.indexOf('cancel') === -1) {
@@ -406,9 +438,7 @@ const uploadImage = async (tempPath) => {
     const response = await fetch(tempPath)
     console.log('fetch 响应状态:', response.status)
 
-    if (!response.ok) {
-      throw new Error('无法读取图片文件，请重试')
-    }
+    if (!response.ok) throw new Error('无法读取图片文件，请重试')
 
     const blob = await response.blob()
     console.log('Blob 大小:', blob.size, '类型:', blob.type)
