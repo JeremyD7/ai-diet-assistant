@@ -10,7 +10,7 @@
 				<view class="logo-wrapper">
 					<image class="logo" src="/static/logo.png" mode="aspectFit"></image>
 				</view>
-				<text class="app-name">AI 饮食助手</text>
+				<text class="app-name">毛毛的饮食助手</text>
 				<text class="tagline">智能健康，科学饮食</text>
 			</view>
 
